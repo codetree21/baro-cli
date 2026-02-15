@@ -40,13 +40,6 @@ baro publish --version 1.0.0
 | `baro search <query>` | Search for products |
 | `baro status` | Show fork origin and version info |
 | `baro upstream` | Check for new releases from fork origin |
-| `baro team create <name>` | Create a new team |
-| `baro team list` | List your teams and invitations |
-| `baro team info <name>` | Show team details and members |
-| `baro team invite <team> <user>` | Invite a user to a team |
-| `baro team accept <id>` | Accept a team invitation |
-| `baro team reject <id>` | Reject a team invitation |
-| `baro team remove <team> <user>` | Remove a member from a team |
 
 ## Publish Options
 
@@ -54,8 +47,7 @@ baro publish --version 1.0.0
 baro publish --version 1.0.0 \
   --category developer-tools \
   --license MIT \
-  --changelog "Added dark mode" \
-  --team my-team
+  --changelog "Added dark mode"
 ```
 
 ## Configuration
