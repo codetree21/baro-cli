@@ -141,67 +141,6 @@ pub struct MyProductsResponse {
     pub products: Vec<Product>,
 }
 
-// -- Teams --
-
-#[derive(Debug, Deserialize)]
-pub struct TeamsResponse {
-    pub teams: Vec<TeamInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TeamInfo {
-    pub id: String,
-    pub name: String,
-    pub display_name: Option<String>,
-    pub role: Option<String>,
-    pub storage_used_bytes: Option<i64>,
-    pub created_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TeamDetailResponse {
-    pub team: TeamInfo,
-    pub members: Vec<TeamMemberInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TeamMemberInfo {
-    pub publisher_id: String,
-    pub role: String,
-    pub joined_at: Option<String>,
-    pub publisher: PublisherRef,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateTeamResponse {
-    pub team: TeamInfo,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct InvitationResponse {
-    pub invitation: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct InvitationsListResponse {
-    pub invitations: Vec<InvitationInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct InvitationInfo {
-    pub id: String,
-    pub status: String,
-    pub created_at: String,
-    pub team: TeamRef,
-    pub inviter: PublisherRef,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TeamRef {
-    pub name: String,
-    pub display_name: Option<String>,
-}
-
 // -- Error --
 
 #[derive(Debug, Deserialize)]

@@ -38,9 +38,6 @@ pub enum Commands {
         #[arg(long, default_value = "MIT")]
         license: String,
 
-        /// Publish as a team product
-        #[arg(long)]
-        team: Option<String>,
     },
 
     /// Clone a product (download + unpack)
@@ -73,52 +70,4 @@ pub enum Commands {
     /// Check for new releases from fork origin
     Upstream,
 
-    /// Team management
-    Team {
-        #[command(subcommand)]
-        action: TeamCommands,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum TeamCommands {
-    /// Create a new team
-    Create {
-        /// Team name (lowercase alphanumeric with hyphens)
-        name: String,
-        /// Display name
-        #[arg(long)]
-        display_name: Option<String>,
-    },
-    /// List your teams and pending invitations
-    List,
-    /// Show team details and members
-    Info {
-        /// Team name
-        name: String,
-    },
-    /// Invite a user to a team (owner only)
-    Invite {
-        /// Team name
-        team: String,
-        /// Username to invite
-        username: String,
-    },
-    /// Accept a team invitation
-    Accept {
-        /// Invitation ID
-        invitation_id: String,
-    },
-    /// Reject a team invitation
-    Reject {
-        /// Invitation ID
-        invitation_id: String,
-    },
-    /// Remove a member from a team
-    Remove {
-        /// Team name
-        team: String,
-        /// Username to remove
-        username: String,
-    },
 }

@@ -67,28 +67,6 @@ impl BaroClient {
         Ok(data)
     }
 
-    async fn delete_json<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<T> {
-        let url = format!("{}{}", self.base_url(), path);
-        let mut req = self.client.delete(&url).json(body);
-        if let Some(ref token) = self.token {
-            req = req.bearer_auth(token);
-        }
-        let resp = req.send().await.context(format!("Failed to connect: DELETE {}", path))?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body: ApiError = resp.json().await.unwrap_or(ApiError {
-                error: format!("HTTP {}", status),
-            });
-            return Err(anyhow::anyhow!("{}", body.error));
-        }
-        let data = resp.json().await.context("Failed to parse response")?;
-        Ok(data)
-    }
-
     // -- Auth --
 
     pub async fn get_me(&self) -> Result<AuthMeResponse> {
@@ -145,18 +123,14 @@ impl BaroClient {
         description: &str,
         category_slug: &str,
         license: &str,
-        team_id: Option<&str>,
     ) -> Result<CreateProductResponse> {
-        let mut body = serde_json::json!({
+        let body = serde_json::json!({
             "slug": slug,
             "name": name,
             "description": description,
             "category_slug": category_slug,
             "license": license,
         });
-        if let Some(tid) = team_id {
-            body["team_id"] = serde_json::json!(tid);
-        }
         self.post_json("/api/products", &body).await
     }
 
@@ -209,71 +183,6 @@ impl BaroClient {
             "/api/products/{}/{}/releases/{}/download",
             username, slug, version
         ))
-        .await
-    }
-
-    // -- Teams --
-
-    pub async fn create_team(
-        &self,
-        name: &str,
-        display_name: Option<&str>,
-    ) -> Result<CreateTeamResponse> {
-        let mut body = serde_json::json!({ "name": name });
-        if let Some(dn) = display_name {
-            body["display_name"] = serde_json::json!(dn);
-        }
-        self.post_json("/api/teams", &body).await
-    }
-
-    pub async fn list_teams(&self) -> Result<TeamsResponse> {
-        self.get_json("/api/teams").await
-    }
-
-    pub async fn get_team(&self, name: &str) -> Result<TeamDetailResponse> {
-        self.get_json(&format!("/api/teams/{}", name)).await
-    }
-
-    pub async fn invite_member(
-        &self,
-        team_name: &str,
-        username: &str,
-    ) -> Result<InvitationResponse> {
-        self.post_json(
-            &format!("/api/teams/{}/members", team_name),
-            &serde_json::json!({ "username": username }),
-        )
-        .await
-    }
-
-    pub async fn get_invitations(&self) -> Result<InvitationsListResponse> {
-        self.get_json("/api/teams/invitations").await
-    }
-
-    pub async fn respond_invitation(
-        &self,
-        invitation_id: &str,
-        action: &str,
-    ) -> Result<serde_json::Value> {
-        self.post_json(
-            "/api/teams/invitations",
-            &serde_json::json!({
-                "invitation_id": invitation_id,
-                "action": action,
-            }),
-        )
-        .await
-    }
-
-    pub async fn remove_team_member(
-        &self,
-        team_name: &str,
-        username: &str,
-    ) -> Result<serde_json::Value> {
-        self.delete_json(
-            &format!("/api/teams/{}/members", team_name),
-            &serde_json::json!({ "username": username }),
-        )
         .await
     }
 

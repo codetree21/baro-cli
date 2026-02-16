@@ -9,7 +9,7 @@ mod types;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands, TeamCommands};
+use cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,9 +26,8 @@ async fn main() -> Result<()> {
             name,
             description,
             license,
-            team,
         } => {
-            cmd_publish(version, changelog, category, name, description, license, team).await?;
+            cmd_publish(version, changelog, category, name, description, license).await?;
         }
         Commands::Clone { product } => {
             cmd_clone(&product).await?;
@@ -47,29 +46,6 @@ async fn main() -> Result<()> {
         Commands::Upstream => {
             cmd_upstream().await?;
         }
-        Commands::Team { action } => match action {
-            TeamCommands::Create { name, display_name } => {
-                cmd_team_create(&name, display_name.as_deref()).await?;
-            }
-            TeamCommands::List => {
-                cmd_team_list().await?;
-            }
-            TeamCommands::Info { name } => {
-                cmd_team_info(&name).await?;
-            }
-            TeamCommands::Invite { team, username } => {
-                cmd_team_invite(&team, &username).await?;
-            }
-            TeamCommands::Accept { invitation_id } => {
-                cmd_team_respond(&invitation_id, "accept").await?;
-            }
-            TeamCommands::Reject { invitation_id } => {
-                cmd_team_respond(&invitation_id, "reject").await?;
-            }
-            TeamCommands::Remove { team, username } => {
-                cmd_team_remove(&team, &username).await?;
-            }
-        },
     }
 
     Ok(())
@@ -82,23 +58,13 @@ async fn cmd_publish(
     name_flag: Option<String>,
     description_flag: Option<String>,
     license: String,
-    team_name: Option<String>,
 ) -> Result<()> {
     let token = auth::get_token().await?;
     let client = api::BaroClient::new(&token);
 
     // 1. Get publisher info
     let me = client.get_me().await?;
-
-    // Resolve team if provided
-    let team_id = if let Some(ref tn) = team_name {
-        let team_detail = client.get_team(tn).await?;
-        println!("Publishing as team {}...", tn);
-        Some(team_detail.team.id)
-    } else {
-        println!("Publishing as {}...", me.user.username);
-        None
-    };
+    println!("Publishing as {}...", me.user.username);
 
     // 2. Extract metadata from build files or flags
     let cwd = std::env::current_dir()?;
@@ -174,28 +140,14 @@ async fn cmd_publish(
         &hash[..12]
     );
 
-    // 7. Check tier size limit locally
-    let tier_limit: i64 = match me.user.personal_tier.as_str() {
-        "creator" => 200 * 1024 * 1024,
-        "team" => 500 * 1024 * 1024,
-        _ => 50 * 1024 * 1024,
-    };
-    if size > tier_limit {
-        return Err(anyhow::anyhow!(
-            "Package size {} exceeds tier limit {}. Remove large files or upgrade.",
-            format_bytes(size),
-            format_bytes(tier_limit)
-        ));
-    }
-
-    // 8. Create or find product
-    let namespace = team_name.as_deref().unwrap_or(&me.user.username);
+    // 7. Create or find product
+    let namespace = &me.user.username;
     let my_products = client.list_my_products().await?;
     let existing = my_products.products.iter().find(|p| p.slug == slug);
     if existing.is_none() {
         println!("Creating product {}/{}...", namespace, slug);
         client
-            .create_product(&slug, &product_name, &product_desc, &category_slug, &license, team_id.as_deref())
+            .create_product(&slug, &product_name, &product_desc, &category_slug, &license)
             .await?;
     }
 
@@ -425,103 +377,6 @@ async fn cmd_upstream() -> Result<()> {
             println!("No releases found for {}", m.origin);
         }
     }
-
-    Ok(())
-}
-
-// -- Team commands --
-
-async fn cmd_team_create(name: &str, display_name: Option<&str>) -> Result<()> {
-    let token = auth::get_token().await?;
-    let client = api::BaroClient::new(&token);
-
-    let resp = client.create_team(name, display_name).await?;
-    println!(
-        "Team created: {} ({})",
-        resp.team.display_name.as_deref().unwrap_or(&resp.team.name),
-        resp.team.name
-    );
-    Ok(())
-}
-
-async fn cmd_team_list() -> Result<()> {
-    let token = auth::get_token().await?;
-    let client = api::BaroClient::new(&token);
-
-    // Show teams
-    let resp = client.list_teams().await?;
-    if resp.teams.is_empty() {
-        println!("No teams. Create one with: baro team create <name>");
-    } else {
-        println!("Your teams:");
-        for t in &resp.teams {
-            let role = t.role.as_deref().unwrap_or("?");
-            let display = t.display_name.as_deref().unwrap_or(&t.name);
-            println!("  @{:<20} {} [{}]", t.name, display, role);
-        }
-    }
-
-    // Show pending invitations
-    let inv_resp = client.get_invitations().await?;
-    if !inv_resp.invitations.is_empty() {
-        println!("\nPending invitations:");
-        for inv in &inv_resp.invitations {
-            let team_display = inv.team.display_name.as_deref().unwrap_or(&inv.team.name);
-            let inviter = inv.inviter.display_name.as_deref().unwrap_or(&inv.inviter.username);
-            println!("  {} from {} (ID: {})", team_display, inviter, inv.id);
-        }
-        println!("\nAccept: baro team accept <invitation-id>");
-    }
-
-    Ok(())
-}
-
-async fn cmd_team_info(name: &str) -> Result<()> {
-    let token = auth::get_token().await?;
-    let client = api::BaroClient::new(&token);
-
-    let resp = client.get_team(name).await?;
-    let display = resp.team.display_name.as_deref().unwrap_or(&resp.team.name);
-    println!("{} (@{})", display, resp.team.name);
-    println!("\nMembers ({}):", resp.members.len());
-    for m in &resp.members {
-        let name = m.publisher.display_name.as_deref().unwrap_or(&m.publisher.username);
-        println!("  @{:<20} {} [{}]", m.publisher.username, name, m.role);
-    }
-
-    Ok(())
-}
-
-async fn cmd_team_invite(team: &str, username: &str) -> Result<()> {
-    let token = auth::get_token().await?;
-    let client = api::BaroClient::new(&token);
-
-    client.invite_member(team, username).await?;
-    println!("Invitation sent to @{} for team {}", username, team);
-
-    Ok(())
-}
-
-async fn cmd_team_respond(invitation_id: &str, action: &str) -> Result<()> {
-    let token = auth::get_token().await?;
-    let client = api::BaroClient::new(&token);
-
-    client.respond_invitation(invitation_id, action).await?;
-    if action == "accept" {
-        println!("Invitation accepted!");
-    } else {
-        println!("Invitation rejected.");
-    }
-
-    Ok(())
-}
-
-async fn cmd_team_remove(team: &str, username: &str) -> Result<()> {
-    let token = auth::get_token().await?;
-    let client = api::BaroClient::new(&token);
-
-    client.remove_team_member(team, username).await?;
-    println!("Removed @{} from team {}", username, team);
 
     Ok(())
 }
