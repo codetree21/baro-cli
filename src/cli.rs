@@ -40,6 +40,37 @@ pub enum Commands {
 
     },
 
+    /// Publish a forked product as your own (one-time, then use publish for updates)
+    Remake {
+        /// Version string (e.g., "1.0.0")
+        #[arg(long)]
+        version: String,
+
+        /// Product slug (must differ from original if you own a product with the same slug)
+        #[arg(long)]
+        slug: Option<String>,
+
+        /// Changelog describing what changed and why
+        #[arg(long)]
+        changelog: Option<String>,
+
+        /// Category slug (e.g., developer-tools, productivity, ai-agents)
+        #[arg(long)]
+        category: String,
+
+        /// Product display name (default: from build file or directory name)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Product description, 50+ chars (default: from build file)
+        #[arg(long)]
+        description: Option<String>,
+
+        /// License identifier (default: MIT)
+        #[arg(long, default_value = "MIT")]
+        license: String,
+    },
+
     /// Fork a product (download + unpack)
     Fork {
         /// Product identifier: user/product or user/product@version

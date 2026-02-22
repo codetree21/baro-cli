@@ -29,7 +29,8 @@ impl BaroClient {
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url(), path);
-        let mut req = self.client.get(&url);
+        let mut req = self.client.get(&url)
+            .header("X-Baro-CLI-Version", env!("CARGO_PKG_VERSION"));
         if let Some(ref token) = self.token {
             req = req.bearer_auth(token);
         }
@@ -51,7 +52,8 @@ impl BaroClient {
         body: &serde_json::Value,
     ) -> Result<T> {
         let url = format!("{}{}", self.base_url(), path);
-        let mut req = self.client.post(&url).json(body);
+        let mut req = self.client.post(&url).json(body)
+            .header("X-Baro-CLI-Version", env!("CARGO_PKG_VERSION"));
         if let Some(ref token) = self.token {
             req = req.bearer_auth(token);
         }

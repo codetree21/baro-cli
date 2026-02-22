@@ -32,6 +32,17 @@ async fn main() -> Result<()> {
         } => {
             cmd_publish(version, changelog, category, name, description, license).await
         }
+        Commands::Remake {
+            version,
+            slug,
+            changelog,
+            category,
+            name,
+            description,
+            license,
+        } => {
+            cmd_remake(version, slug, changelog, category, name, description, license).await
+        }
         Commands::Fork { product } | Commands::Clone { product } => {
             cmd_fork(&product).await
         }
@@ -81,6 +92,128 @@ fn read_readme(dir: &std::path::Path) -> Option<String> {
 
 const STARTING_VERSIONS: &[&str] = &["0.0.1", "0.1.0", "1.0.0"];
 
+struct PublishContext {
+    slug: String,
+    product_name: String,
+    product_desc: Option<String>,
+    category_slug: String,
+    license: String,
+    version: String,
+    changelog_text: String,
+    readme: Option<String>,
+    existing_manifest: Option<types::Manifest>,
+}
+
+/// Shared publish steps: gate → package → create/find product → upload → confirm → manifest → track
+async fn execute_publish(
+    client: &api::BaroClient,
+    namespace: &str,
+    cwd: &std::path::Path,
+    ctx: PublishContext,
+) -> Result<()> {
+    // 1. Run publish gate
+    let categories = client.list_categories().await?;
+    let gate = publish_gate::run(
+        cwd,
+        &ctx.version,
+        ctx.product_desc.as_deref(),
+        &ctx.category_slug,
+        &categories.categories,
+    );
+    if !gate.passed {
+        eprintln!("Publish gate failed:\n");
+        for f in &gate.failures {
+            eprintln!("  ERROR: {}", f.message);
+            eprintln!("  Fix: {}\n", f.ai_fix_prompt);
+        }
+        std::process::exit(1);
+    }
+    for w in &gate.warnings {
+        eprintln!("  WARN: {}", w.message);
+    }
+
+    // 2. Package
+    println!("Packaging...");
+    let (archive_bytes, hash) = packaging::create_archive(cwd)?;
+    let size = archive_bytes.len() as i64;
+    println!(
+        "  Archive: {} ({})",
+        utils::format_bytes(size),
+        &hash[..12]
+    );
+
+    // 3. Create or find product
+    let my_products = client.list_my_products().await?;
+    let existing_product = my_products.products.iter().find(|p| p.slug == ctx.slug);
+    let product_id = if let Some(ep) = existing_product {
+        ep.id.clone()
+    } else {
+        let desc = ctx.product_desc.as_ref().ok_or_else(|| anyhow::anyhow!(
+            "Description required (50+ chars) for first publish. Use --description or add to your Cargo.toml/package.json."
+        ))?;
+        println!("Creating product {}/{}...", namespace, ctx.slug);
+        let created = client
+            .create_product(&ctx.slug, &ctx.product_name, desc, &ctx.category_slug, &ctx.license)
+            .await?;
+        created.product.id.clone()
+    };
+
+    // 4. Create release
+    println!("Uploading v{}...", ctx.version);
+    let release = client
+        .create_release(namespace, &ctx.slug, &ctx.version, &ctx.changelog_text, size, &hash, ctx.readme.as_deref())
+        .await?;
+
+    // 5. Upload to R2
+    client
+        .upload_to_r2(&release.upload_url, &archive_bytes)
+        .await?;
+
+    // 6. Confirm
+    let confirm = client.confirm_release(&release.release_id).await?;
+
+    println!(
+        "\nPublished {}/{}@{} ({})",
+        namespace, ctx.slug, ctx.version,
+        utils::format_bytes(size)
+    );
+    match confirm.review_status.as_deref() {
+        Some("published") => println!("Status: published"),
+        Some("unlisted") => println!("Status: unlisted (not visible in browse)"),
+        Some("pending_review") => println!("Status: pending_review (admin approval required)"),
+        Some(s) => println!("Status: {}", s),
+        None => println!("Status: pending_review (admin approval required)"),
+    }
+
+    // 7. Write/update manifest
+    let updated_manifest = types::Manifest {
+        origin: ctx.existing_manifest.as_ref().and_then(|m| m.origin.clone()),
+        cloned_at: ctx.existing_manifest.as_ref().and_then(|m| m.cloned_at.clone()),
+        file_hash: ctx.existing_manifest.as_ref().and_then(|m| m.file_hash.clone()),
+        slug: Some(ctx.slug.clone()),
+        product_id: Some(product_id.clone()),
+        publisher: Some(namespace.to_string()),
+        version: ctx.version.clone(),
+    };
+    manifest::write(cwd, &updated_manifest)?;
+
+    // 8. Track remake if this is a forked product
+    if let Some(ref origin) = updated_manifest.origin {
+        let origin_parts: Vec<&str> = origin.splitn(2, '/').collect();
+        if origin_parts.len() == 2 {
+            match client
+                .track_remake(origin_parts[0], origin_parts[1], &product_id, &updated_manifest.version)
+                .await
+            {
+                Ok(_) => println!("Remake tracked from {}", origin),
+                Err(e) => eprintln!("Warning: could not track fork: {}", e),
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn cmd_publish(
     version: String,
     changelog: Option<String>,
@@ -99,6 +232,18 @@ async fn cmd_publish(
     // 2. Read manifest for product identity
     let cwd = std::env::current_dir()?;
     let existing_manifest = manifest::read(&cwd).ok();
+
+    // Block publish on unpublished forks — direct to remake
+    if let Some(ref m) = existing_manifest {
+        if m.origin.is_some() && m.product_id.is_none() {
+            return Err(anyhow::anyhow!(
+                "This is a forked product (from {}). Use `baro remake` to publish it as your own.\n\
+                Example: baro remake --version {} --slug <your-slug> --category <category>",
+                m.origin.as_deref().unwrap_or("unknown"),
+                version
+            ));
+        }
+    }
 
     let slug = match &existing_manifest {
         Some(m) if m.slug.is_some() => m.slug.clone().unwrap(),
@@ -151,118 +296,131 @@ async fn cmd_publish(
         }
     };
 
-    // 5. Run publish gate
-    let categories = client.list_categories().await?;
-    let gate = publish_gate::run(
-        &cwd,
-        &version,
-        product_desc.as_deref(),
-        &category_slug,
-        &categories.categories,
-    );
-    if !gate.passed {
-        eprintln!("Publish gate failed:\n");
-        for f in &gate.failures {
-            eprintln!("  ERROR: {}", f.message);
-            eprintln!("  Fix: {}\n", f.ai_fix_prompt);
-        }
-        std::process::exit(1);
-    }
-    for w in &gate.warnings {
-        eprintln!("  WARN: {}", w.message);
-    }
-
-    // 6. Resolve changelog
+    // 5. Resolve changelog
     let changelog_text = match changelog {
         Some(cl) => cl,
         None => utils::read_changelog(&cwd, &version)
             .unwrap_or_else(|| format!("Release {}", version)),
     };
 
-    // 7. Read README for product page
+    // 6. Read README for product page
     let readme = read_readme(&cwd);
 
-    // 8. Package
-    println!("Packaging...");
-    let (archive_bytes, hash) = packaging::create_archive(&cwd)?;
-    let size = archive_bytes.len() as i64;
-    println!(
-        "  Archive: {} ({})",
-        utils::format_bytes(size),
-        &hash[..12]
-    );
+    execute_publish(&client, &me.user.username, &cwd, PublishContext {
+        slug,
+        product_name,
+        product_desc,
+        category_slug,
+        license,
+        version,
+        changelog_text,
+        readme,
+        existing_manifest,
+    }).await
+}
 
-    // 9. Create or find product
-    let namespace = &me.user.username;
-    let my_products = client.list_my_products().await?;
-    let existing_product = my_products.products.iter().find(|p| p.slug == slug);
-    let product_id = if let Some(ep) = existing_product {
-        ep.id.clone()
-    } else {
-        let desc = product_desc.as_ref().ok_or_else(|| anyhow::anyhow!(
-            "Description required (50+ chars) for first publish. Use --description or add to your Cargo.toml/package.json."
-        ))?;
-        println!("Creating product {}/{}...", namespace, slug);
-        let created = client
-            .create_product(&slug, &product_name, desc, &category_slug, &license)
-            .await?;
-        created.product.id.clone()
-    };
+async fn cmd_remake(
+    version: String,
+    slug_flag: Option<String>,
+    changelog: Option<String>,
+    category: String,
+    name_flag: Option<String>,
+    description_flag: Option<String>,
+    license: String,
+) -> Result<()> {
+    let token = auth::get_token().await?;
+    let client = api::BaroClient::new(&token);
 
-    // 10. Create release
-    println!("Uploading v{}...", version);
-    let release = client
-        .create_release(namespace, &slug, &version, &changelog_text, size, &hash, readme.as_deref())
-        .await?;
+    // 1. Get publisher info
+    let me = client.get_me().await?;
+    println!("Remaking as {}...", me.user.username);
 
-    // 11. Upload to R2
-    client
-        .upload_to_r2(&release.upload_url, &archive_bytes)
-        .await?;
+    // 2. Read manifest — require fork origin
+    let cwd = std::env::current_dir()?;
+    let existing_manifest = manifest::read(&cwd).ok();
 
-    // 12. Confirm
-    let confirm = client.confirm_release(&release.release_id).await?;
+    let manifest = existing_manifest.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("No .baro/manifest.json found. This is not a forked product.\nUse `baro publish` for your own products.")
+    })?;
 
-    println!(
-        "\nPublished {}/{}@{} ({})",
-        namespace, slug, version,
-        utils::format_bytes(size)
-    );
-    match confirm.review_status.as_deref() {
-        Some("published") => println!("Status: published"),
-        Some("unlisted") => println!("Status: unlisted (not visible in browse)"),
-        Some("pending_review") => println!("Status: pending_review (admin approval required)"),
-        Some(s) => println!("Status: {}", s),
-        None => println!("Status: pending_review (admin approval required)"),
+    let origin = manifest.origin.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("No fork origin in manifest. This is not a forked product.\nUse `baro publish` for your own products.")
+    })?;
+
+    // 3. Block if already remade
+    if manifest.product_id.is_some() {
+        let slug = manifest.slug.as_deref().unwrap_or("?");
+        let publisher = manifest.publisher.as_deref().unwrap_or("?");
+        return Err(anyhow::anyhow!(
+            "Already remade as {}/{}. Use `baro publish` for new versions.\n\
+            Example: baro publish --version {}",
+            publisher, slug, version
+        ));
     }
 
-    // 13. Write/update manifest
-    let updated_manifest = types::Manifest {
-        origin: existing_manifest.as_ref().and_then(|m| m.origin.clone()),
-        cloned_at: existing_manifest.as_ref().and_then(|m| m.cloned_at.clone()),
-        file_hash: existing_manifest.as_ref().and_then(|m| m.file_hash.clone()),
-        slug: Some(slug.clone()),
-        product_id: Some(product_id.clone()),
-        publisher: Some(namespace.clone()),
-        version: version.clone(),
-    };
-    manifest::write(&cwd, &updated_manifest)?;
+    // 4. Resolve slug
+    let slug = slug_flag.unwrap_or_else(|| utils::dir_to_slug(&cwd));
+    if !validate_slug(&slug) {
+        return Err(anyhow::anyhow!(
+            "Invalid slug '{}'. Must be lowercase alphanumeric with hyphens, not starting/ending with hyphen.",
+            slug
+        ));
+    }
 
-    // 14. Track remake if this is a forked product
-    if let Some(ref origin) = updated_manifest.origin {
-        let origin_parts: Vec<&str> = origin.splitn(2, '/').collect();
-        if origin_parts.len() == 2 {
-            match client
-                .track_remake(origin_parts[0], origin_parts[1], &product_id, &updated_manifest.version)
-                .await
-            {
-                Ok(_) => println!("Remake tracked from {}", origin),
-                Err(e) => eprintln!("Warning: could not track fork: {}", e),
-            }
+    // 5. Check for slug collision with own products
+    let my_products = client.list_my_products().await?;
+    if my_products.products.iter().any(|p| p.slug == slug) {
+        return Err(anyhow::anyhow!(
+            "Slug '{}' is already used by your product. Use --slug <different-name> to pick a new one.\n\
+            Example: baro remake --version {} --slug {}-remix --category {}",
+            slug, version, slug, category
+        ));
+    }
+
+    // 6. Self-fork confirmation
+    let origin_parts: Vec<&str> = origin.splitn(2, '/').collect();
+    if origin_parts.len() == 2 && origin_parts[0] == me.user.username {
+        eprint!("You're remaking your own product ({}). Continue? [Y/n] ", origin);
+        std::io::Write::flush(&mut std::io::stderr())?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        if !input.is_empty() && input != "y" && input != "yes" {
+            println!("Cancelled.");
+            return Ok(());
         }
     }
 
-    Ok(())
+    // 7. Extract metadata
+    let (detected_name, detected_desc) = utils::detect_metadata(&cwd);
+    let product_name = name_flag
+        .or(detected_name)
+        .unwrap_or_else(|| slug.clone());
+    let product_desc = description_flag.or(detected_desc);
+
+    // 8. Resolve changelog
+    let changelog_text = match changelog {
+        Some(cl) => cl,
+        None => utils::read_changelog(&cwd, &version)
+            .unwrap_or_else(|| format!("Release {}", version)),
+    };
+
+    // 9. Read README
+    let readme = read_readme(&cwd);
+
+    println!("Remaking from {} → {}/{}...", origin, me.user.username, slug);
+
+    execute_publish(&client, &me.user.username, &cwd, PublishContext {
+        slug,
+        product_name,
+        product_desc,
+        category_slug: category,
+        license,
+        version,
+        changelog_text,
+        readme,
+        existing_manifest,
+    }).await
 }
 
 async fn cmd_fork(product: &str) -> Result<()> {
