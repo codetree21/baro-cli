@@ -1,6 +1,6 @@
 [package]
 name = "baro"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "CLI for the Baro AI product marketplace"
 authors = ["codetree <hi@bandb.ai>"]
