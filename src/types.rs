@@ -154,7 +154,7 @@ pub struct ApiError {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
-    // Clone fields (present for cloned products)
+    // Fork fields (present for forked products)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -32,8 +32,8 @@ async fn main() -> Result<()> {
         } => {
             cmd_publish(version, changelog, category, name, description, license).await
         }
-        Commands::Clone { product } => {
-            cmd_clone(&product).await
+        Commands::Fork { product } | Commands::Clone { product } => {
+            cmd_fork(&product).await
         }
         Commands::Search {
             query,
@@ -248,7 +248,7 @@ async fn cmd_publish(
     };
     manifest::write(&cwd, &updated_manifest)?;
 
-    // 14. Track fork if this is a cloned product
+    // 14. Track remake if this is a forked product
     if let Some(ref origin) = updated_manifest.origin {
         let origin_parts: Vec<&str> = origin.splitn(2, '/').collect();
         if origin_parts.len() == 2 {
@@ -265,7 +265,7 @@ async fn cmd_publish(
     Ok(())
 }
 
-async fn cmd_clone(product: &str) -> Result<()> {
+async fn cmd_fork(product: &str) -> Result<()> {
     // Parse user/slug[@version]
     let (user_slug, version) = if let Some(idx) = product.rfind('@') {
         (&product[..idx], Some(&product[idx + 1..]))
@@ -337,7 +337,7 @@ async fn cmd_clone(product: &str) -> Result<()> {
     let dest = std::path::Path::new(slug);
     if dest.exists() {
         return Err(anyhow::anyhow!(
-            "Directory '{}' already exists. Remove it first or clone to a different location.",
+            "Directory '{}' already exists. Remove it first or fork to a different location.",
             slug
         ));
     }
@@ -532,15 +532,15 @@ fn cmd_status() -> Result<()> {
         }
     }
 
-    // Show clone origin if present
+    // Show fork origin if present
     if let Some(ref origin) = m.origin {
         println!("Origin:  {}", origin);
         if let Some(ref cloned_at) = m.cloned_at {
-            println!("Cloned:  {}", cloned_at);
+            println!("Forked:  {}", cloned_at);
         }
     }
 
-    // Fallback: if neither publish nor clone info
+    // Fallback: if neither publish nor fork info
     if m.slug.is_none() && m.origin.is_none() {
         println!("Version: {}", m.version);
     }
@@ -553,7 +553,7 @@ async fn cmd_upstream() -> Result<()> {
     let m = manifest::read(&cwd)?;
 
     let origin = m.origin.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("No fork origin in manifest. This product was not cloned.")
+        anyhow::anyhow!("No fork origin in manifest. This product was not forked.")
     })?;
     let parts: Vec<&str> = origin.splitn(2, '/').collect();
     if parts.len() != 2 {
@@ -571,7 +571,7 @@ async fn cmd_upstream() -> Result<()> {
                 let preview = utils::truncate_str(cl, 100);
                 println!("  Changelog: {}", preview);
             }
-            println!("  Run: baro clone {}@{}", origin, latest.version);
+            println!("  Run: baro fork {}@{}", origin, latest.version);
         }
         Some(_) => {
             println!("Up to date with upstream ({})", m.version);

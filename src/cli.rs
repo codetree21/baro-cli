@@ -40,7 +40,14 @@ pub enum Commands {
 
     },
 
-    /// Clone a product (download + unpack)
+    /// Fork a product (download + unpack)
+    Fork {
+        /// Product identifier: user/product or user/product@version
+        product: String,
+    },
+
+    /// Alias for fork (hidden)
+    #[command(hide = true)]
     Clone {
         /// Product identifier: user/product or user/product@version
         product: String,
