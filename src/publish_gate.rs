@@ -41,7 +41,7 @@ const SECRET_EXTENSIONS: &[&str] = &[".pem", ".key", ".p12", ".pfx"];
 pub fn run(
     dir: &Path,
     version: &str,
-    description: &str,
+    description: Option<&str>,
     category_slug: &str,
     categories: &[Category],
 ) -> GateResult {
@@ -79,15 +79,17 @@ pub fn run(
         });
     }
 
-    // Required: description length
-    if description.len() < 50 {
-        failures.push(CheckFailure {
-            message: format!(
-                "Description too short ({} chars, need 50+)",
-                description.len()
-            ),
-            ai_fix_prompt: "Add a description of at least 50 characters. Use --description or update your Cargo.toml/package.json description field.".to_string(),
-        });
+    // Required: description length (only checked when provided)
+    if let Some(desc) = description {
+        if desc.len() < 50 {
+            failures.push(CheckFailure {
+                message: format!(
+                    "Description too short ({} chars, need 50+)",
+                    desc.len()
+                ),
+                ai_fix_prompt: "Add a description of at least 50 characters. Use --description or update your Cargo.toml/package.json description field.".to_string(),
+            });
+        }
     }
 
     // Required: valid category
@@ -184,5 +186,157 @@ fn regex_lite(pattern: &str) -> impl Fn(&str) -> bool {
             }
         }
         !expect_digit // must not end with '.'
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::fs;
+
+    fn sample_categories() -> Vec<Category> {
+        vec![
+            Category {
+                id: 1,
+                slug: "developer-tools".to_string(),
+                name: "Developer Tools".to_string(),
+                description: None,
+            },
+            Category {
+                id: 2,
+                slug: "productivity".to_string(),
+                name: "Productivity".to_string(),
+                description: None,
+            },
+        ]
+    }
+
+    fn valid_description() -> String {
+        "A comprehensive toolkit for developers that helps automate common tasks.".to_string()
+    }
+
+    fn setup_valid_dir() -> tempfile::TempDir {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(dir.path().join("README.md"), "# Test Project").unwrap();
+        dir
+    }
+
+    #[test]
+    fn all_checks_pass() {
+        let dir = setup_valid_dir();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(result.passed, "Expected pass, got failures: {:?}", result.failures.iter().map(|f| &f.message).collect::<Vec<_>>());
+        assert!(result.failures.is_empty());
+    }
+
+    #[test]
+    fn missing_build_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "# Hello").unwrap();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("build file")));
+    }
+
+    #[test]
+    fn missing_readme() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("README")));
+    }
+
+    #[test]
+    fn detects_env_file_as_secret() {
+        let dir = setup_valid_dir();
+        fs::write(dir.path().join(".env"), "SECRET=abc").unwrap();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains(".env")));
+    }
+
+    #[test]
+    fn env_example_allowed_env_local_blocked() {
+        let dir = setup_valid_dir();
+        fs::write(dir.path().join(".env.example"), "KEY=").unwrap();
+        fs::write(dir.path().join(".env.local"), "SECRET=abc").unwrap();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        let secret_msg = result.failures.iter().find(|f| f.message.contains("secret")).unwrap();
+        assert!(secret_msg.message.contains(".env.local"));
+        assert!(!secret_msg.message.contains(".env.example"));
+    }
+
+    #[test]
+    fn detects_credentials_json() {
+        let dir = setup_valid_dir();
+        fs::write(dir.path().join("credentials.json"), "{}").unwrap();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("credentials.json")));
+    }
+
+    #[test]
+    fn detects_pem_extension() {
+        let dir = setup_valid_dir();
+        fs::write(dir.path().join("cert.pem"), "-----BEGIN").unwrap();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("cert.pem")));
+    }
+
+    #[test]
+    fn empty_version_fails() {
+        let dir = setup_valid_dir();
+        let result = run(dir.path(), "", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("version")));
+    }
+
+    #[test]
+    fn invalid_version_format() {
+        let dir = setup_valid_dir();
+        let result = run(dir.path(), "1.0.a", Some(&valid_description()), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("version")));
+    }
+
+    #[test]
+    fn valid_version_formats() {
+        let dir = setup_valid_dir();
+        for v in &["1", "1.0", "1.0.0", "2.3.4.5"] {
+            let result = run(dir.path(), v, Some(&valid_description()), "developer-tools", &sample_categories());
+            assert!(
+                !result.failures.iter().any(|f| f.message.contains("version")),
+                "Version '{}' should be valid", v
+            );
+        }
+    }
+
+    #[test]
+    fn short_description_fails() {
+        let dir = setup_valid_dir();
+        let result = run(dir.path(), "1.0.0", Some("Too short"), "developer-tools", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("Description too short")));
+    }
+
+    #[test]
+    fn none_description_passes() {
+        let dir = setup_valid_dir();
+        let result = run(dir.path(), "1.0.0", None, "developer-tools", &sample_categories());
+        assert!(!result.failures.iter().any(|f| f.message.contains("Description")),
+            "None description should skip check for existing products");
+    }
+
+    #[test]
+    fn invalid_category_fails() {
+        let dir = setup_valid_dir();
+        let result = run(dir.path(), "1.0.0", Some(&valid_description()), "nonexistent", &sample_categories());
+        assert!(!result.passed);
+        assert!(result.failures.iter().any(|f| f.message.contains("Invalid category")));
     }
 }

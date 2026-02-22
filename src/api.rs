@@ -152,15 +152,20 @@ impl BaroClient {
         changelog: &str,
         file_size_bytes: i64,
         file_hash_sha256: &str,
+        readme: Option<&str>,
     ) -> Result<CreateReleaseResponse> {
+        let mut body = serde_json::json!({
+            "version": version,
+            "changelog": changelog,
+            "file_size_bytes": file_size_bytes,
+            "file_hash_sha256": file_hash_sha256,
+        });
+        if let Some(readme_content) = readme {
+            body["readme"] = serde_json::Value::String(readme_content.to_string());
+        }
         self.post_json(
             &format!("/api/products/{}/{}/releases", username, slug),
-            &serde_json::json!({
-                "version": version,
-                "changelog": changelog,
-                "file_size_bytes": file_size_bytes,
-                "file_hash_sha256": file_hash_sha256,
-            }),
+            &body,
         )
         .await
     }

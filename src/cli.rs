@@ -64,10 +64,23 @@ pub enum Commands {
         limit: u32,
     },
 
-    /// Show fork origin and version info
+    /// Initialize a baro product in the current directory
+    Init {
+        /// Product slug (default: derived from directory name)
+        #[arg(long)]
+        slug: Option<String>,
+    },
+
+    /// List your published products
+    Products {
+        /// Filter by status: published, pending_review, unlisted, rejected
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Show product identity and fork origin info
     Status,
 
     /// Check for new releases from fork origin
     Upstream,
-
 }

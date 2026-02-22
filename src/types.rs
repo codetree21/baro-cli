@@ -124,6 +124,8 @@ pub struct CreateReleaseResponse {
 pub struct ConfirmResponse {
     pub release_id: String,
     pub upload_status: String,
+    #[serde(default)]
+    pub review_status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,10 +154,24 @@ pub struct ApiError {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Manifest {
-    pub origin: String,
+    // Clone fields (present for cloned products)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloned_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_hash: Option<String>,
+
+    // Publish identity (present for published products)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<String>,
+
+    // Version (always present)
     pub version: String,
-    pub cloned_at: String,
-    pub file_hash: String,
 }
 
 // -- Supabase token refresh --

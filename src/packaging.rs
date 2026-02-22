@@ -76,3 +76,76 @@ pub fn extract_archive(bytes: &[u8], dest: &Path) -> Result<()> {
     archive.unpack(dest)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::fs;
+
+    #[test]
+    fn create_and_extract_roundtrip() {
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("hello.txt"), "world").unwrap();
+        fs::create_dir(src.path().join("subdir")).unwrap();
+        fs::write(src.path().join("subdir/nested.txt"), "deep").unwrap();
+
+        let (bytes, hash) = create_archive(src.path()).unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(hash.len(), 64); // SHA-256 hex
+
+        let dest = tempdir().unwrap();
+        extract_archive(&bytes, dest.path()).unwrap();
+        assert_eq!(fs::read_to_string(dest.path().join("hello.txt")).unwrap(), "world");
+        assert_eq!(fs::read_to_string(dest.path().join("subdir/nested.txt")).unwrap(), "deep");
+    }
+
+    #[test]
+    fn excludes_known_directories() {
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("keep.txt"), "visible").unwrap();
+        for dir_name in &[".git", "target", "node_modules", ".next"] {
+            let d = src.path().join(dir_name);
+            fs::create_dir(&d).unwrap();
+            fs::write(d.join("file.txt"), "hidden").unwrap();
+        }
+
+        let (bytes, _) = create_archive(src.path()).unwrap();
+        let dest = tempdir().unwrap();
+        extract_archive(&bytes, dest.path()).unwrap();
+
+        assert!(dest.path().join("keep.txt").exists());
+        for dir_name in &[".git", "target", "node_modules", ".next"] {
+            assert!(!dest.path().join(dir_name).exists(), "{} should be excluded", dir_name);
+        }
+    }
+
+    #[test]
+    fn excludes_env_files() {
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("main.rs"), "fn main() {}").unwrap();
+        fs::write(src.path().join(".env"), "SECRET=x").unwrap();
+        fs::write(src.path().join(".env.local"), "SECRET=y").unwrap();
+
+        let (bytes, _) = create_archive(src.path()).unwrap();
+        let dest = tempdir().unwrap();
+        extract_archive(&bytes, dest.path()).unwrap();
+
+        assert!(dest.path().join("main.rs").exists());
+        assert!(!dest.path().join(".env").exists());
+        assert!(!dest.path().join(".env.local").exists());
+    }
+
+    #[test]
+    fn extract_creates_dest_directory() {
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("file.txt"), "content").unwrap();
+
+        let (bytes, _) = create_archive(src.path()).unwrap();
+
+        let dest = tempdir().unwrap();
+        let nested = dest.path().join("a/b/c");
+        extract_archive(&bytes, &nested).unwrap();
+        assert!(nested.join("file.txt").exists());
+    }
+}
