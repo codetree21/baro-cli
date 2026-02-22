@@ -74,9 +74,9 @@ pub struct CategoryRef {
 #[derive(Debug, Deserialize)]
 pub struct ProductStats {
     #[serde(default)]
-    pub download_count: Option<u64>,
-    #[serde(default)]
     pub fork_count: Option<u64>,
+    #[serde(default)]
+    pub remake_count: Option<u64>,
     #[serde(default)]
     pub avg_rating: Option<f64>,
     #[serde(default)]

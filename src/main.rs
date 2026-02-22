@@ -253,10 +253,10 @@ async fn cmd_publish(
         let origin_parts: Vec<&str> = origin.splitn(2, '/').collect();
         if origin_parts.len() == 2 {
             match client
-                .track_fork(origin_parts[0], origin_parts[1], &product_id, &updated_manifest.version)
+                .track_remake(origin_parts[0], origin_parts[1], &product_id, &updated_manifest.version)
                 .await
             {
-                Ok(_) => println!("Fork tracked from {}", origin),
+                Ok(_) => println!("Remake tracked from {}", origin),
                 Err(e) => eprintln!("Warning: could not track fork: {}", e),
             }
         }
@@ -285,7 +285,7 @@ async fn cmd_clone(product: &str) -> Result<()> {
     let token = match auth::get_token().await {
         Ok(t) => t,
         Err(_) => {
-            eprint!("Login required to clone. Open browser to sign up? [Y/n] ");
+            eprint!("Login required to fork. Open browser to sign up? [Y/n] ");
             std::io::Write::flush(&mut std::io::stderr())?;
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
@@ -312,12 +312,12 @@ async fn cmd_clone(product: &str) -> Result<()> {
     };
 
     // Get download URL
-    println!("Downloading {}/{}@{}...", username, slug, target_version);
+    println!("Forking {}/{}@{}...", username, slug, target_version);
     let download = client
         .get_download(username, slug, &target_version)
         .await?;
 
-    // Download
+    // Download file from R2
     let bytes = client.download_from_r2(&download.download_url).await?;
 
     // Verify hash
@@ -356,13 +356,18 @@ async fn cmd_clone(product: &str) -> Result<()> {
     manifest::write(dest, &m)?;
 
     println!(
-        "Cloned {}/{}@{} -> ./{}/  ({})",
+        "Forked {}/{}@{} → ./{}/  ({})",
         username,
         slug,
         target_version,
         slug,
         utils::format_bytes(bytes.len() as i64)
     );
+    println!();
+    println!("Next steps:");
+    println!("  1. Read README.md for setup instructions");
+    println!("  2. Build and run the project");
+    println!("  3. Customize with AI — ask what to change");
 
     Ok(())
 }
@@ -396,13 +401,13 @@ async fn cmd_search(query: &str, category: Option<&str>, sort: &str, limit: u32)
         println!("  {}", desc);
 
         if let Some(ref stats) = p.stats {
-            let dl = stats.download_count.unwrap_or(0);
+            let forks = stats.fork_count.unwrap_or(0);
             let rating = stats
                 .avg_rating
                 .map(|r| format!("{:.1}/5", r))
                 .unwrap_or_else(|| "-".to_string());
             let rc = stats.rating_count.unwrap_or(0);
-            println!("  DL: {}  Rating: {} ({})  Updated: {}", dl, rating, rc, &p.updated_at[..10]);
+            println!("  Forks: {}  Rating: {} ({})  Updated: {}", forks, rating, rc, &p.updated_at[..10]);
         }
         println!();
     }
@@ -498,13 +503,13 @@ async fn cmd_products(status_filter: Option<String>) -> Result<()> {
         println!("  {}", desc);
 
         if let Some(ref stats) = p.stats {
-            let dl = stats.download_count.unwrap_or(0);
+            let forks = stats.fork_count.unwrap_or(0);
             let rating = stats
                 .avg_rating
                 .map(|r| format!("{:.1}/5", r))
                 .unwrap_or_else(|| "-".to_string());
             let rc = stats.rating_count.unwrap_or(0);
-            println!("  DL: {}  Rating: {} ({})", dl, rating, rc);
+            println!("  Forks: {}  Rating: {} ({})", forks, rating, rc);
         }
         println!();
     }

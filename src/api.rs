@@ -191,9 +191,9 @@ impl BaroClient {
         .await
     }
 
-    // -- Forks --
+    // -- Remakes --
 
-    pub async fn track_fork(
+    pub async fn track_remake(
         &self,
         origin_username: &str,
         origin_slug: &str,
