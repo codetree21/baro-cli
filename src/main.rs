@@ -6,6 +6,7 @@ mod manifest;
 mod packaging;
 mod publish_gate;
 mod types;
+mod update_check;
 mod utils;
 
 use anyhow::Result;
@@ -15,10 +16,11 @@ use cli::{Cli, Commands};
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let update_handle = update_check::spawn_check();
 
-    match cli.command {
+    let result = match cli.command {
         Commands::Login => {
-            auth::login().await?;
+            auth::login().await
         }
         Commands::Publish {
             version,
@@ -28,10 +30,10 @@ async fn main() -> Result<()> {
             description,
             license,
         } => {
-            cmd_publish(version, changelog, category, name, description, license).await?;
+            cmd_publish(version, changelog, category, name, description, license).await
         }
         Commands::Clone { product } => {
-            cmd_clone(&product).await?;
+            cmd_clone(&product).await
         }
         Commands::Search {
             query,
@@ -39,23 +41,30 @@ async fn main() -> Result<()> {
             sort,
             limit,
         } => {
-            cmd_search(&query, category.as_deref(), &sort, limit).await?;
+            cmd_search(&query, category.as_deref(), &sort, limit).await
         }
         Commands::Init { slug } => {
-            cmd_init(slug)?;
+            cmd_init(slug)
         }
         Commands::Products { status } => {
-            cmd_products(status).await?;
+            cmd_products(status).await
         }
         Commands::Status => {
-            cmd_status()?;
+            cmd_status()
         }
         Commands::Upstream => {
-            cmd_upstream().await?;
+            cmd_upstream().await
         }
+    };
+
+    // Print update notice if available (non-blocking, 100ms timeout)
+    if let Ok(Ok(Some(notice))) =
+        tokio::time::timeout(std::time::Duration::from_millis(100), update_handle).await
+    {
+        eprintln!("{}", notice);
     }
 
-    Ok(())
+    result
 }
 
 fn read_readme(dir: &std::path::Path) -> Option<String> {
