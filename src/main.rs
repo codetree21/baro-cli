@@ -43,8 +43,8 @@ async fn main() -> Result<()> {
         } => {
             cmd_remake(version, slug, changelog, category, name, description, license).await
         }
-        Commands::Fork { product } | Commands::Clone { product } => {
-            cmd_fork(&product).await
+        Commands::Fork { product, dir } | Commands::Clone { product, dir } => {
+            cmd_fork(&product, dir.as_deref()).await
         }
         Commands::Search {
             query,
@@ -65,6 +65,9 @@ async fn main() -> Result<()> {
         }
         Commands::Upstream => {
             cmd_upstream().await
+        }
+        Commands::Pull => {
+            cmd_pull().await
         }
     };
 
@@ -423,7 +426,16 @@ async fn cmd_remake(
     }).await
 }
 
-async fn cmd_fork(product: &str) -> Result<()> {
+struct ForkResult {
+    dest_dir: String,
+    version: String,
+    username: String,
+    slug: String,
+    size_bytes: i64,
+}
+
+/// Core fork implementation. Returns metadata about the fork.
+async fn fork_impl(product: &str, dir_override: Option<&str>) -> Result<ForkResult> {
     // Parse user/slug[@version]
     let (user_slug, version) = if let Some(idx) = product.rfind('@') {
         (&product[..idx], Some(&product[idx + 1..]))
@@ -492,11 +504,12 @@ async fn cmd_fork(product: &str) -> Result<()> {
     }
 
     // Extract
-    let dest = std::path::Path::new(slug);
+    let dest_name = dir_override.unwrap_or(slug);
+    let dest = std::path::Path::new(dest_name);
     if dest.exists() {
         return Err(anyhow::anyhow!(
-            "Directory '{}' already exists. Remove it first or fork to a different location.",
-            slug
+            "Directory '{}' already exists. Remove it first or use --dir to specify a different location.",
+            dest_name
         ));
     }
     packaging::extract_archive(&bytes, dest)?;
@@ -513,13 +526,25 @@ async fn cmd_fork(product: &str) -> Result<()> {
     };
     manifest::write(dest, &m)?;
 
+    Ok(ForkResult {
+        dest_dir: dest_name.to_string(),
+        version: target_version,
+        username: username.to_string(),
+        slug: slug.to_string(),
+        size_bytes: bytes.len() as i64,
+    })
+}
+
+async fn cmd_fork(product: &str, dir_override: Option<&str>) -> Result<()> {
+    let result = fork_impl(product, dir_override).await?;
+
     println!(
         "Forked {}/{}@{} → ./{}/  ({})",
-        username,
-        slug,
-        target_version,
-        slug,
-        utils::format_bytes(bytes.len() as i64)
+        result.username,
+        result.slug,
+        result.version,
+        result.dest_dir,
+        utils::format_bytes(result.size_bytes)
     );
     println!();
     println!("Next steps:");
@@ -729,7 +754,7 @@ async fn cmd_upstream() -> Result<()> {
                 let preview = utils::truncate_str(cl, 100);
                 println!("  Changelog: {}", preview);
             }
-            println!("  Run: baro fork {}@{}", origin, latest.version);
+            println!("  Run: baro pull");
         }
         Some(_) => {
             println!("Up to date with upstream ({})", m.version);
@@ -738,6 +763,99 @@ async fn cmd_upstream() -> Result<()> {
             println!("No releases found for {}", origin);
         }
     }
+
+    Ok(())
+}
+
+async fn cmd_pull() -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let m = manifest::read(&cwd)?;
+
+    // 1. Require fork origin
+    let origin = m.origin.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("No fork origin in manifest. This product was not forked.")
+    })?;
+    let parts: Vec<&str> = origin.splitn(2, '/').collect();
+    if parts.len() != 2 {
+        return Err(anyhow::anyhow!("Invalid origin in manifest: {}", origin));
+    }
+    let (_username, slug) = (parts[0], parts[1]);
+
+    // 2. Check upstream for new version (no auth needed for read)
+    let client = api::BaroClient::anonymous();
+    let releases = client.list_releases(parts[0], slug).await?;
+
+    let latest = match releases.releases.first() {
+        Some(latest) if latest.version != m.version => latest,
+        Some(_) => {
+            println!("Up to date with upstream ({})", m.version);
+            return Ok(());
+        }
+        None => {
+            println!("No releases found for {}", origin);
+            return Ok(());
+        }
+    };
+
+    let new_version = &latest.version;
+    println!("New version available: {} (current: {})", new_version, m.version);
+    if let Some(ref cl) = latest.changelog {
+        let preview = utils::truncate_str(cl, 200);
+        println!("  Changelog: {}", preview);
+    }
+    println!();
+
+    // 3. Compute sibling directory: <slug>-upstream-<version>
+    let parent = cwd.parent().ok_or_else(|| {
+        anyhow::anyhow!("Cannot determine parent directory")
+    })?;
+    let sibling_name = format!("{}-upstream-{}", slug, new_version);
+    let sibling_path = parent.join(&sibling_name);
+
+    if sibling_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Directory '{}' already exists. Remove it to pull again, or compare manually.",
+            sibling_name
+        ));
+    }
+
+    // 4. Fork to sibling directory
+    let product_spec = format!("{}@{}", origin, new_version);
+    let sibling_str = sibling_path.to_str()
+        .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+
+    let result = fork_impl(&product_spec, Some(sibling_str)).await?;
+
+    println!(
+        "Pulled {}/{}@{} → ../{}/ ({})",
+        result.username,
+        result.slug,
+        result.version,
+        sibling_name,
+        utils::format_bytes(result.size_bytes)
+    );
+    println!();
+
+    // 5. Print AI merge prompt
+    let current_dir_name = cwd
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string());
+
+    println!("To merge upstream changes, ask your AI assistant:");
+    println!();
+    println!("---");
+    println!(
+        "Compare the upstream update in ../{} (v{}) with my current project",
+        sibling_name, new_version
+    );
+    println!(
+        "in ./{} (forked from {}@{}). Identify what changed upstream,",
+        current_dir_name, origin, m.version
+    );
+    println!("then apply those changes to my project while preserving my customizations.");
+    println!("Show me a summary of conflicts if any of my modified files were also changed upstream.");
+    println!("---");
 
     Ok(())
 }

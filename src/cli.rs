@@ -75,6 +75,10 @@ pub enum Commands {
     Fork {
         /// Product identifier: user/product or user/product@version
         product: String,
+
+        /// Output directory (default: product slug)
+        #[arg(long)]
+        dir: Option<String>,
     },
 
     /// Alias for fork (hidden)
@@ -82,6 +86,10 @@ pub enum Commands {
     Clone {
         /// Product identifier: user/product or user/product@version
         product: String,
+
+        /// Output directory (default: product slug)
+        #[arg(long)]
+        dir: Option<String>,
     },
 
     /// Search for products
@@ -121,4 +129,7 @@ pub enum Commands {
 
     /// Check for new releases from fork origin
     Upstream,
+
+    /// Pull upstream changes into a sibling directory for AI-assisted merge
+    Pull,
 }
