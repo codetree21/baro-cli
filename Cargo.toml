@@ -1,6 +1,6 @@
 [package]
 name = "baro"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "CLI for the Baro AI product marketplace"
 authors = ["codetree <hi@bandb.ai>"]
@@ -30,6 +30,7 @@ chrono = "0.4"
 walkdir = "2"
 ignore = "0.4"
 open = "5"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"

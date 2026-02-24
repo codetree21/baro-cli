@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 
 use crate::api::BaroClient;
 use crate::config;
+
+const LOGIN_TIMEOUT_SECS: u64 = 120;
+const POLL_INTERVAL_SECS: u64 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StoredCredentials {
@@ -32,76 +33,66 @@ fn load_credentials() -> Result<StoredCredentials> {
 }
 
 pub async fn login() -> Result<()> {
-    // Bind to random port
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
+    let session_code = uuid::Uuid::new_v4().to_string();
+    let base = config::api_base_url();
 
-    let auth_url = format!("{}/auth/cli?port={}", config::api_base_url(), port);
+    // Register session on server
+    let client = reqwest::Client::new();
+    let resp = client
+        .put(format!("{}/api/auth/cli-session", base))
+        .json(&serde_json::json!({ "session_code": session_code }))
+        .send()
+        .await
+        .context("Failed to connect to server")?;
+    if !resp.status().is_success() {
+        anyhow::bail!("Failed to create login session. Try again later.");
+    }
+
+    let auth_url = format!("{}/auth/cli?code={}", base, session_code);
     println!("Opening browser for authentication...");
     println!("If the browser doesn't open, visit:\n{}\n", auth_url);
 
-    // Try to open browser
     let _ = open::that(&auth_url);
 
     println!("Waiting for authentication...");
 
-    // Accept one connection
-    let (mut stream, _) = listener.accept()?;
-    let reader = BufReader::new(&stream);
-    let request_line = reader
-        .lines()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No request received"))??;
+    // Poll for tokens
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(LOGIN_TIMEOUT_SECS);
 
-    // Parse: GET /callback?access_token=...&refresh_token=...&expires_at=... HTTP/1.1
-    let path = request_line
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Invalid HTTP request"))?;
+    let creds: StoredCredentials = loop {
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!(
+                "Login timed out after {}s. Run 'baro login' to try again.",
+                LOGIN_TIMEOUT_SECS
+            );
+        }
 
-    let query = path
-        .split('?')
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("No query parameters in callback"))?;
+        tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
 
-    let params: std::collections::HashMap<String, String> = query
-        .split('&')
-        .filter_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            Some((parts.next()?.to_string(), parts.next()?.to_string()))
-        })
-        .collect();
+        let resp = client
+            .get(format!("{}/api/auth/cli-session", base))
+            .query(&[("code", &session_code)])
+            .send()
+            .await
+            .context("Failed to connect to server")?;
 
-    let access_token = params
-        .get("access_token")
-        .ok_or_else(|| anyhow::anyhow!("Missing access_token in callback"))?
-        .clone();
-    let refresh_token = params
-        .get("refresh_token")
-        .ok_or_else(|| anyhow::anyhow!("Missing refresh_token in callback"))?
-        .clone();
-    let expires_at: i64 = params
-        .get("expires_at")
-        .ok_or_else(|| anyhow::anyhow!("Missing expires_at in callback"))?
-        .parse()
-        .context("Invalid expires_at value")?;
-
-    // Send success response
-    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nAccess-Control-Allow-Origin: *\r\n\r\n<html><body><h1>Authentication successful!</h1><p>You can close this window and return to the terminal.</p></body></html>";
-    stream.write_all(response.as_bytes())?;
-    drop(stream);
-
-    // Save credentials
-    let creds = StoredCredentials {
-        access_token: access_token.clone(),
-        refresh_token,
-        expires_at,
+        match resp.status().as_u16() {
+            200 => break resp.json().await.context("Failed to parse auth response")?,
+            202 => continue, // pending
+            404 | 410 => anyhow::bail!(
+                "Login session expired. Run 'baro login' to try again."
+            ),
+            status => anyhow::bail!("Unexpected server response ({}). Try again.", status),
+        }
     };
+
     save_credentials(&creds)?;
 
     // Verify
-    let client = BaroClient::new(&access_token);
-    let me = client.get_me().await?;
+    let api = BaroClient::new(&creds.access_token);
+    let me = api.get_me().await
+        .context("Tokens received but verification failed.\nRun 'baro login' to try again.")?;
     println!("Authenticated as {}", me.user.username);
 
     Ok(())
