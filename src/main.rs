@@ -69,6 +69,9 @@ async fn main() -> Result<()> {
         Commands::Pull => {
             cmd_pull().await
         }
+        Commands::Logout => {
+            cmd_logout()
+        }
     };
 
     // Print update notice if available (non-blocking, 100ms timeout)
@@ -857,5 +860,16 @@ async fn cmd_pull() -> Result<()> {
     println!("Show me a summary of conflicts if any of my modified files were also changed upstream.");
     println!("---");
 
+    Ok(())
+}
+
+fn cmd_logout() -> Result<()> {
+    let path = config::credentials_path()?;
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+        println!("Logged out. Credentials removed.");
+    } else {
+        println!("Not logged in.");
+    }
     Ok(())
 }

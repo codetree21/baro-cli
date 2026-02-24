@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "baro", about = "CLI for the Baro AI product marketplace")]
+#[command(name = "baro", about = "CLI for the Baro AI product marketplace", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -132,4 +132,7 @@ pub enum Commands {
 
     /// Pull upstream changes into a sibling directory for AI-assisted merge
     Pull,
+
+    /// Log out and remove stored credentials
+    Logout,
 }
