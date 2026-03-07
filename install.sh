@@ -6,10 +6,12 @@ INSTALL_DIR="${BARO_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS
 OS=$(uname -s)
+EXE=""
 case "$OS" in
-  Darwin) os="apple-darwin" ;;
-  Linux)  os="unknown-linux-gnu" ;;
-  *)      echo "Error: unsupported OS: $OS"; exit 1 ;;
+  Darwin)       os="apple-darwin" ;;
+  Linux)        os="unknown-linux-gnu" ;;
+  MINGW*|MSYS*) os="pc-windows-msvc"; EXE=".exe" ;;
+  *)            echo "Error: unsupported OS: $OS"; exit 1 ;;
 esac
 
 # Detect architecture
@@ -62,10 +64,12 @@ fi
 # Extract and install
 tar -xzf "${TMPDIR}/${ARCHIVE}" -C "${TMPDIR}"
 mkdir -p "$INSTALL_DIR"
-mv "${TMPDIR}/baro" "${INSTALL_DIR}/baro"
-chmod +x "${INSTALL_DIR}/baro"
+mv "${TMPDIR}/baro${EXE}" "${INSTALL_DIR}/baro${EXE}"
+if [ -z "$EXE" ]; then
+  chmod +x "${INSTALL_DIR}/baro${EXE}"
+fi
 
-echo "Installed baro v${LATEST} to ${INSTALL_DIR}/baro"
+echo "Installed baro v${LATEST} to ${INSTALL_DIR}/baro${EXE}"
 
 # PATH hint
 case ":${PATH}:" in
@@ -74,11 +78,26 @@ case ":${PATH}:" in
     echo ""
     echo "Add ${INSTALL_DIR} to your PATH:"
     echo ""
-    echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
-    echo ""
-    echo "Then restart your shell or run: source ~/.zshrc"
+    case "$OS" in
+      MINGW*|MSYS*)
+        echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
+        echo ""
+        echo "Then restart your shell or run: source ~/.bashrc"
+        ;;
+      *)
+        SHELL_NAME=$(basename "${SHELL:-/bin/sh}")
+        case "$SHELL_NAME" in
+          zsh)  RC_FILE=".zshrc" ;;
+          bash) RC_FILE=".bashrc" ;;
+          *)    RC_FILE=".profile" ;;
+        esac
+        echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/${RC_FILE}"
+        echo ""
+        echo "Then restart your shell or run: source ~/${RC_FILE}"
+        ;;
+    esac
     ;;
 esac
 
 echo ""
-echo "Run 'baro --help' to get started."
+echo "Run 'baro${EXE} --help' to get started."

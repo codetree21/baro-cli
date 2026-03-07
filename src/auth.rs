@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use crate::api::BaroClient;
@@ -18,9 +19,14 @@ pub struct StoredCredentials {
 fn save_credentials(creds: &StoredCredentials) -> Result<()> {
     let path = config::credentials_path()?;
     std::fs::write(&path, serde_json::to_string_pretty(creds)?)?;
-    let mut perms = std::fs::metadata(&path)?.permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(&path, perms)?;
+
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&path, perms)?;
+    }
+
     Ok(())
 }
 

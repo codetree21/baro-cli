@@ -28,6 +28,9 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             use_cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
 
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +45,7 @@ jobs:
         run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build
+        shell: bash
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }}
@@ -50,16 +54,23 @@ jobs:
           fi
 
       - name: Package
+        shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           ARCHIVE=baro-${VERSION}-${{ matrix.target }}.tar.gz
           STAGING=$(mktemp -d)
-          cp target/${{ matrix.target }}/release/baro "${STAGING}/"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            BIN_NAME="baro.exe"
+          else
+            BIN_NAME="baro"
+          fi
+          cp "target/${{ matrix.target }}/release/${BIN_NAME}" "${STAGING}/"
           cp README.md LICENSE "${STAGING}/"
-          tar -czf "${ARCHIVE}" -C "${STAGING}" baro README.md LICENSE
+          tar -czf "${ARCHIVE}" -C "${STAGING}" "${BIN_NAME}" README.md LICENSE
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 
       - name: Compute checksum
+        shell: bash
         run: |
           if [[ "$OSTYPE" == "darwin"* ]]; then
             shasum -a 256 ${{ env.ARCHIVE }} > ${{ env.ARCHIVE }}.sha256

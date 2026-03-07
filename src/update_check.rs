@@ -83,9 +83,14 @@ async fn fetch_latest_version() -> Option<String> {
 
 fn format_notice(latest: &str) -> Option<String> {
     if is_newer(latest, CURRENT_VERSION) {
+        let hint = if cfg!(windows) {
+            "  Run in Git Bash: curl -fsSL https://raw.githubusercontent.com/codetree21/baro-cli/main/install.sh | sh"
+        } else {
+            "  Run: curl -fsSL https://raw.githubusercontent.com/codetree21/baro-cli/main/install.sh | sh"
+        };
         Some(format!(
-            "\nUpdate available: v{} → v{}\n  Run: curl -fsSL https://raw.githubusercontent.com/codetree21/baro-cli/main/install.sh | sh",
-            CURRENT_VERSION, latest
+            "\nUpdate available: v{} → v{}\n{}",
+            CURRENT_VERSION, latest, hint
         ))
     } else {
         None
