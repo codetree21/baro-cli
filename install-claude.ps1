@@ -97,6 +97,22 @@ if (-not $hasGit) {
 # --- 5. Claude Code ---
 Write-Host ""
 Write-Host "[5/5] Claude Code 설치..."
+Refresh-Path
+$hasNpm = Get-Command npm -ErrorAction SilentlyContinue
+if (-not $hasNpm) {
+    Write-Host ""
+    Write-Host "=== Node.js가 방금 설치되어 현재 터미널에서 npm을 찾을 수 없습니다. ===" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. 이 PowerShell 창을 닫으세요"
+    Write-Host "  2. 관리자 권한으로 PowerShell을 다시 여세요"
+    Write-Host "  3. 아래 명령어를 실행하세요:"
+    Write-Host ""
+    Write-Host "     npm install -g @anthropic-ai/claude-code" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  4. 'claude' 를 실행하여 로그인하세요"
+    Write-Host ""
+    exit 0
+}
 npm install -g @anthropic-ai/claude-code
 Write-Host "  Claude Code: 설치 완료"
 
@@ -104,9 +120,7 @@ Write-Host "  Claude Code: 설치 완료"
 Write-Host ""
 Write-Host "=== 설치 완료! ===" -ForegroundColor Green
 Write-Host ""
-Write-Host "다음 단계:"
-Write-Host "  1. 터미널을 재시작하세요 (PATH 적용)"
-Write-Host "  2. 'claude' 를 실행하여 로그인하세요"
+Write-Host "'claude' 를 실행하여 로그인하세요."
 Write-Host ""
 Write-Host "추천 터미널: Windows Terminal (Microsoft Store에서 설치)"
 Write-Host ""
